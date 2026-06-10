@@ -7,9 +7,7 @@ import {
   addDoc, 
   updateDoc, 
   deleteDoc, 
-  orderBy, 
-  limit, 
-  Timestamp 
+  limit 
 } from 'firebase/firestore';
 import { db } from '../firebase/config';
 import { Property, Transaction, AIReport } from '../types';
@@ -61,15 +59,23 @@ export const saveProperty = async (userId: string, propertyData: Omit<Property, 
 // --- SERVIÇO DE TRANSAÇÕES (MOVIMENTAÇÕES) ---
 export const getTransactions = async (userId: string): Promise<Transaction[]> => {
   try {
+    // Nota: usar orderBy junto com where exige índice composto no Firestore.
+    // Para evitar a necessidade de índices (plano gratuito), buscamos todos os
+    // documentos do usuário e ordenamos localmente no cliente.
     const q = query(
       collection(db, 'transactions'), 
-      where('userId', '==', userId),
-      orderBy('transactionDate', 'desc')
+      where('userId', '==', userId)
     );
     const querySnapshot = await getDocs(q);
     const transactions: Transaction[] = [];
     querySnapshot.forEach((docSnap) => {
       transactions.push({ id: docSnap.id, ...docSnap.data() } as Transaction);
+    });
+    // Ordenar por data da transação (mais recente primeiro) no cliente
+    transactions.sort((a, b) => {
+      const dateA = a.transactionDate || a.createdAt || '';
+      const dateB = b.transactionDate || b.createdAt || '';
+      return dateB.localeCompare(dateA);
     });
     return transactions;
   } catch (error) {
@@ -120,15 +126,21 @@ export const deleteTransaction = async (transactionId: string): Promise<void> =>
 // --- SERVIÇO DE RELATÓRIOS DA IA ---
 export const getAIReports = async (userId: string): Promise<AIReport[]> => {
   try {
+    // Ordenação feita no cliente para evitar necessidade de índice composto
     const q = query(
       collection(db, 'aiReports'), 
-      where('userId', '==', userId),
-      orderBy('createdAt', 'desc')
+      where('userId', '==', userId)
     );
     const querySnapshot = await getDocs(q);
     const reports: AIReport[] = [];
     querySnapshot.forEach((docSnap) => {
       reports.push({ id: docSnap.id, ...docSnap.data() } as AIReport);
+    });
+    // Ordenar por data de criação (mais recente primeiro) no cliente
+    reports.sort((a, b) => {
+      const dateA = a.createdAt || '';
+      const dateB = b.createdAt || '';
+      return dateB.localeCompare(dateA);
     });
     return reports;
   } catch (error) {

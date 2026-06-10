@@ -3,6 +3,9 @@ import { Property, Transaction } from '../types';
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
 
+// Modelo atual suportado pela API do Gemini (gemini-1.5-flash foi descontinuado)
+const GEMINI_MODEL = 'gemini-2.5-flash';
+
 // Inicialização segura do SDK
 let genAI: GoogleGenerativeAI | null = null;
 if (API_KEY) {
@@ -12,6 +15,26 @@ if (API_KEY) {
     console.error("Falha ao inicializar o GoogleGenerativeAI SDK:", error);
   }
 }
+
+/**
+ * Retorna uma mensagem de erro amigável com base no código HTTP
+ */
+const getErrorMessage = (error: unknown): string => {
+  const err = error as { status?: number; message?: string };
+  const status = err?.status;
+  const msg = err?.message || '';
+
+  if (status === 404 || msg.includes('not found')) {
+    return `### ⚠️ Modelo de IA não encontrado\n\nO modelo de IA configurado não está disponível nesta chave de API. Verifique se a chave é do Google AI Studio (aistudio.google.com) e não do Google Cloud.\n\n`;
+  }
+  if (status === 429 || msg.includes('quota') || msg.includes('Too Many Requests')) {
+    return `### ⏳ Limite de uso atingido\n\nVocê atingiu o limite gratuito de requisições da API Gemini por hoje. Aguarde alguns minutos ou verifique sua cota em [ai.google.dev/rate-limit](https://ai.dev/rate-limit).\n\n`;
+  }
+  if (status === 401 || status === 403 || msg.includes('API_KEY_INVALID') || msg.includes('permission')) {
+    return `### 🔑 Chave de API inválida\n\nA chave \`VITE_GEMINI_API_KEY\` no arquivo .env parece estar incorreta ou expirada. Gere uma nova chave em [aistudio.google.com](https://aistudio.google.com/apikey).\n\n`;
+  }
+  return `### ⚠️ Erro na comunicação com a IA\n\nNão foi possível conectar ao serviço Gemini no momento. Tente novamente mais tarde.\n\n`;
+};
 
 /**
  * Auxiliar para estruturar os dados financeiros do usuário para o prompt
@@ -95,13 +118,14 @@ Use uma linguagem amigável, clara e encorajadora para o produtor rural. Evite j
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
     const result = await model.generateContent(prompt);
     const response = await result.response;
     return response.text();
   } catch (error) {
     console.error("Erro ao chamar API do Gemini:", error);
-    return `### ⚠️ Erro na comunicação com a IA\n\nNão foi possível conectar ao serviço inteligente Gemini no momento. Exibindo análise preliminar baseada em dados simulados:\n\n` + getMockAnalysis(context);
+    const errorMsg = getErrorMessage(error);
+    return errorMsg + getMockAnalysis(context);
   }
 };
 
@@ -137,7 +161,7 @@ Se a pergunta não tiver relação com a fazenda ou com agronegócio, responda e
 
   try {
     const model = genAI.getGenerativeModel({ 
-      model: 'gemini-1.5-flash',
+      model: GEMINI_MODEL,
       systemInstruction: systemInstruction
     });
 
@@ -158,7 +182,19 @@ Se a pergunta não tiver relação com a fazenda ou com agronegócio, responda e
     return response.text();
   } catch (error) {
     console.error("Erro na conversa com a IA:", error);
-    return "Desculpe, ocorreu um erro ao processar sua pergunta. Por favor, verifique sua conexão ou tente novamente mais tarde.";
+    const err = error as { status?: number; message?: string };
+    const status = err?.status;
+    const msg = err?.message || '';
+    if (status === 429 || msg.includes('quota') || msg.includes('Too Many Requests')) {
+      return "⏳ **Limite de uso atingido.** Você atingiu a cota gratuita da API Gemini. Aguarde alguns minutos e tente novamente.";
+    }
+    if (status === 401 || status === 403 || msg.includes('API_KEY_INVALID')) {
+      return "🔑 **Chave de API inválida.** Verifique se a variável `VITE_GEMINI_API_KEY` no arquivo `.env` está correta.";
+    }
+    if (status === 404 || msg.includes('not found')) {
+      return "⚠️ **Modelo de IA não encontrado.** Verifique se a chave de API é do Google AI Studio (aistudio.google.com).";
+    }
+    return "Desculpe, ocorreu um erro ao processar sua pergunta. Por favor, tente novamente mais tarde.";
   }
 };
 

@@ -24,6 +24,8 @@ import {
   Activity, 
   Download 
 } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 type FilterPeriod = 'monthly' | 'quarterly' | 'yearly';
 
@@ -135,28 +137,221 @@ export const Reports: React.FC = () => {
 
   const categoryData = getCategoryData();
 
-  // Função para exportar CSV localmente das transações visíveis
-  const handleExportCSV = () => {
+  // Função para exportar PDF profissional
+  const handleExportPDF = () => {
     if (filteredTrans.length === 0) return;
-    
-    // Cabeçalho CSV
-    let csvContent = "data:text/csv;charset=utf-8,";
-    csvContent += "Data,Tipo,Categoria,Valor (R$),Descricao\n";
 
-    filteredTrans.forEach(t => {
-      const dateFormatted = t.transactionDate.split('-').reverse().join('/');
-      const typeLabel = t.type === 'income' ? 'Receita' : 'Despesa';
-      const cleanDesc = (t.description || '').replace(/,/g, ';');
-      csvContent += `${dateFormatted},${typeLabel},${t.category},${t.value.toFixed(2)},${cleanDesc}\n`;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const now = new Date();
+    const generatedAt = now.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      + ' às ' + now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
+    const periodLabel: Record<string, string> = {
+      monthly: 'Últimos 30 Dias',
+      quarterly: 'Últimos 3 Meses (Trimestral)',
+      yearly: 'Últimos 12 Meses (Anual)',
+    };
+
+    // ─── Cabeçalho (Banner Verde) ───────────────────────────────────────────
+    doc.setFillColor(16, 185, 129); // emerald-500
+    doc.rect(0, 0, pageWidth, 38, 'F');
+
+    // Faixa decorativa escura inferior do banner
+    doc.setFillColor(5, 150, 105); // emerald-600
+    doc.rect(0, 30, pageWidth, 8, 'F');
+
+    // Título principal
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(20);
+    doc.text('AgroGest IA', 14, 16);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.text('Relatório Financeiro — Gestão de Propriedade Rural', 14, 23);
+
+    // Metadados do relatório (alinhados à direita)
+    doc.setFontSize(7.5);
+    doc.text(`Período: ${periodLabel[period]}`, pageWidth - 14, 11, { align: 'right' });
+    doc.text(`Gerado em: ${generatedAt}`, pageWidth - 14, 17, { align: 'right' });
+    doc.text(`Total de movimentações: ${filteredTrans.length}`, pageWidth - 14, 23, { align: 'right' });
+
+    let cursorY = 48;
+
+    // ─── Cards de Resumo Financeiro ─────────────────────────────────────────
+    const cardW = (pageWidth - 28 - 8) / 3; // 3 cards com margens e gap
+    const cardH = 22;
+    const cards = [
+      { label: 'Receita Total', value: totalIncome, color: [16, 185, 129] as [number,number,number], textColor: [255,255,255] as [number,number,number] },
+      { label: 'Despesa Total', value: totalExpense, color: [239, 68, 68] as [number,number,number], textColor: [255,255,255] as [number,number,number] },
+      { label: netProfit >= 0 ? 'Lucro Líquido' : 'Prejuízo Líquido', value: Math.abs(netProfit), color: netProfit >= 0 ? [5, 150, 105] as [number,number,number] : [185, 28, 28] as [number,number,number], textColor: [255,255,255] as [number,number,number] },
+    ];
+
+    cards.forEach((card, i) => {
+      const x = 14 + i * (cardW + 4);
+      // Sombra simulada
+      doc.setFillColor(220, 220, 220);
+      doc.roundedRect(x + 0.5, cursorY + 0.5, cardW, cardH, 3, 3, 'F');
+      // Card
+      doc.setFillColor(...card.color);
+      doc.roundedRect(x, cursorY, cardW, cardH, 3, 3, 'F');
+      // Label
+      doc.setTextColor(...card.textColor);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.text(card.label.toUpperCase(), x + 4, cursorY + 7);
+      // Valor
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(13);
+      doc.text(`R$ ${card.value.toFixed(2)}`, x + 4, cursorY + 17);
     });
 
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `relatorio_financeiro_${period}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    cursorY += cardH + 10;
+
+    // ─── Seção: Detalhamento de Movimentações ───────────────────────────────
+    doc.setTextColor(30, 41, 59); // slate-800
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text('Detalhamento de Movimentações', 14, cursorY);
+
+    // Linha decorativa abaixo do título
+    doc.setDrawColor(16, 185, 129);
+    doc.setLineWidth(0.5);
+    doc.line(14, cursorY + 2, 60, cursorY + 2);
+    cursorY += 6;
+
+    const tableRows = filteredTrans.map(t => [
+      t.transactionDate.split('-').reverse().join('/'),
+      t.type === 'income' ? 'Receita' : 'Despesa',
+      t.category,
+      `R$ ${t.value.toFixed(2)}`,
+      t.description || '—',
+    ]);
+
+    autoTable(doc, {
+      startY: cursorY,
+      head: [['Data', 'Tipo', 'Categoria', 'Valor', 'Descrição']],
+      body: tableRows,
+      styles: {
+        font: 'helvetica',
+        fontSize: 8,
+        cellPadding: { top: 3, right: 4, bottom: 3, left: 4 },
+        lineColor: [241, 245, 249],
+        lineWidth: 0.2,
+        textColor: [51, 65, 85],
+        overflow: 'ellipsize',
+      },
+      headStyles: {
+        fillColor: [30, 41, 59],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 7.5,
+        halign: 'left',
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252],
+      },
+      columnStyles: {
+        0: { cellWidth: 22, halign: 'center' },
+        1: { cellWidth: 20, halign: 'center' },
+        2: { cellWidth: 32 },
+        3: { cellWidth: 28, halign: 'right', fontStyle: 'bold' },
+        4: { cellWidth: 'auto' },
+      },
+      // Colorir a célula de Tipo conforme receita/despesa
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index === 1) {
+          const cellText = String(data.cell.raw);
+          if (cellText === 'Receita') {
+            data.cell.styles.textColor = [5, 150, 105];
+            data.cell.styles.fontStyle = 'bold';
+          } else {
+            data.cell.styles.textColor = [220, 38, 38];
+            data.cell.styles.fontStyle = 'bold';
+          }
+        }
+        // Colorir valor conforme tipo
+        if (data.section === 'body' && data.column.index === 3) {
+          const row = filteredTrans[data.row.index];
+          if (row) {
+            data.cell.styles.textColor = row.type === 'income' ? [5, 150, 105] : [220, 38, 38];
+          }
+        }
+      },
+      margin: { left: 14, right: 14 },
+    });
+
+    // ─── Seção: Distribuição por Categoria ──────────────────────────────────
+    if (categoryData.length > 0) {
+      // @ts-ignore
+      const afterTableY = (doc as any).lastAutoTable.finalY + 10;
+
+      // Verifica se cabe na página ou precisa pular
+      const needsNewPage = afterTableY > pageHeight - 60;
+      if (needsNewPage) doc.addPage();
+      const catY = needsNewPage ? 20 : afterTableY;
+
+      doc.setTextColor(30, 41, 59);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(11);
+      doc.text('Distribuição de Despesas por Categoria', 14, catY);
+      doc.setDrawColor(239, 68, 68);
+      doc.setLineWidth(0.5);
+      doc.line(14, catY + 2, 80, catY + 2);
+
+      const catRows = categoryData.map(cat => [
+        cat.name,
+        `R$ ${cat.value.toFixed(2)}`,
+        `${totalExpense > 0 ? ((cat.value / totalExpense) * 100).toFixed(1) : '0.0'}%`,
+      ]);
+
+      autoTable(doc, {
+        startY: catY + 6,
+        head: [['Categoria', 'Total Gasto', '% do Total']],
+        body: catRows,
+        styles: {
+          font: 'helvetica',
+          fontSize: 8.5,
+          cellPadding: { top: 3.5, right: 5, bottom: 3.5, left: 5 },
+          lineColor: [241, 245, 249],
+          lineWidth: 0.2,
+          textColor: [51, 65, 85],
+        },
+        headStyles: {
+          fillColor: [239, 68, 68],
+          textColor: [255, 255, 255],
+          fontStyle: 'bold',
+          fontSize: 8,
+        },
+        alternateRowStyles: { fillColor: [255, 245, 245] },
+        columnStyles: {
+          0: { cellWidth: 'auto' },
+          1: { cellWidth: 40, halign: 'right', fontStyle: 'bold' },
+          2: { cellWidth: 30, halign: 'center' },
+        },
+        margin: { left: 14, right: 14 },
+      });
+    }
+
+    // ─── Rodapé em todas as páginas ──────────────────────────────────────────
+    const totalPages = (doc as any).internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.3);
+      doc.line(14, pageHeight - 12, pageWidth - 14, pageHeight - 12);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184);
+      doc.text('AgroGest IA — Gestão Financeira Rural', 14, pageHeight - 6);
+      doc.text(`Página ${i} de ${totalPages}`, pageWidth - 14, pageHeight - 6, { align: 'right' });
+    }
+
+    // ─── Salvar o PDF ─────────────────────────────────────────────────────────
+    const fileName = `AgroGest_Relatorio_${period}_${now.toISOString().split('T')[0]}.pdf`;
+    doc.save(fileName);
   };
 
   if (loading) {
@@ -208,13 +403,13 @@ export const Reports: React.FC = () => {
           </div>
 
           <button
-            onClick={handleExportCSV}
+            onClick={handleExportPDF}
             disabled={filteredTrans.length === 0}
-            className="flex items-center gap-1 py-2 px-3 border border-slate-200 bg-white hover:bg-slate-50 disabled:bg-slate-50 disabled:text-slate-400 text-slate-700 rounded-xl text-xs font-bold transition-all shadow-sm"
-            title="Exportar CSV"
+            className="flex items-center gap-1.5 py-2 px-4 border border-slate-200 bg-white hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 rounded-xl text-xs font-bold transition-all shadow-sm"
+            title="Exportar PDF"
           >
             <Download className="h-4 w-4" />
-            <span className="hidden sm:inline">Exportar</span>
+            <span className="hidden sm:inline">Exportar PDF</span>
           </button>
         </div>
       </div>
